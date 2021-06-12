@@ -2496,7 +2496,9 @@ exec " gcc "/bin/" program
        ,@(substitute-keyword-arguments (package-arguments findutils)
            ((#:configure-flags flags ''())
             `(append
-              ,(if (target-64bit?)
+               ;; TODO: Figure out exactly with architectures need this.
+              ,(if (and (target-64bit?)
+                        (not (target-riscv?)))
                    ''("TIME_T_32_BIT_OK=yes")
                    ''())
               ,(match (%current-system)
