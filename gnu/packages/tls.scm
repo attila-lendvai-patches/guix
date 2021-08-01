@@ -337,7 +337,10 @@ OpenSSL for TARGET."
         ((string-prefix? "powerpc64" target)
          "linux-ppc64")
         ((string-prefix? "powerpc" target)
-         "linux-ppc")))
+         "linux-ppc")
+        ((string-prefix? "riscv64" target)
+         ;; linux64-riscv64 isn't recognized until 3.0.0.
+         "linux-generic64")))
 
 (define-public openssl
   (package
@@ -383,7 +386,8 @@ OpenSSL for TARGET."
                 #~())
          ;; This test seems to be dependant on kernel features.
          ;; https://github.com/openssl/openssl/issues/12242
-         #$@(if (target-arm?)
+         #$@(if (or (target-arm?)
+                    (target-riscv?))
               #~((replace 'check
                    (lambda* (#:key tests? test-target #:allow-other-keys)
                      (when tests?
