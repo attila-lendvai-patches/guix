@@ -33,6 +33,7 @@
   #:use-module (guix utils)
   #:use-module (guix packages)
   #:use-module (guix download)
+  #:use-module (guix utils)
   #:use-module (guix build-system gnu))
 
 (define-public pcre
@@ -55,7 +56,7 @@
              ("readline" ,readline)
              ("zlib" ,zlib)))
    (arguments
-    '(#:disallowed-references ("doc")
+    `(#:disallowed-references ("doc")
       #:configure-flags '("--enable-utf"
                           "--enable-pcregrep-libz"
                           "--enable-pcregrep-libbz2"
@@ -63,7 +64,9 @@
                           "--enable-unicode-properties"
                           "--enable-pcre16"
                           "--enable-pcre32"
-                          "--enable-jit")
+                          ,@(if (target-riscv?)
+                              '()
+                              `("--enable-jit")))
       #:phases (modify-phases %standard-phases
                  (add-after 'install 'move-static-libs
                    (lambda* (#:key outputs #:allow-other-keys)
