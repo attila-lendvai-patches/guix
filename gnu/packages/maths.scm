@@ -4254,7 +4254,8 @@ have a good libm for the Julia programming language that worked consistently
 across compilers and operating systems, and in 32-bit and 64-bit
 environments.")
     ;; Each architecture has its own make target, and there is none for mips.
-    (supported-systems (delete "mips64el-linux" %supported-systems))
+    (supported-systems (fold delete %supported-systems
+                             '("mips64el-linux" "riscv64-linux")))
     ;; See LICENSE.md for details.
     (license (list license:expat
                    license:isc
