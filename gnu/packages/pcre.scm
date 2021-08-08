@@ -110,7 +110,9 @@ POSIX regular expression API.")
                           "--enable-pcre2-16"
                           "--enable-pcre2-32"
                           ;; pcre2_jit_test fails on powerpc32.
-                          ,@(if (target-ppc32?)
+                          ;; JIT isn't supported yet on riscv64.
+                          ,@(if (or (target-ppc32?)
+                                    (target-riscv?))
                               '()
                               `("--enable-jit"))
                           "--disable-static")
