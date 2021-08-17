@@ -892,6 +892,9 @@ large scale eigenvalue problems.")
     (build-system cmake-build-system)
     (home-page "http://www.netlib.org/lapack/")
     (inputs `(("fortran" ,gfortran)
+              ,@(if (target-riscv?)
+                  `(("fortran:lib" ,gfortran "lib"))
+                  '())
               ("python" ,python-wrapper)))
     (arguments
      `(#:configure-flags (list
