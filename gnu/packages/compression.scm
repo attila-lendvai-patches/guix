@@ -819,7 +819,9 @@ decompression of some loosely related file formats used by Microsoft.")
     (native-inputs
      `(;; For tests.
        ("python" ,python)
-       ("valgrind" ,valgrind)))
+       ,@(if (target-riscv?)
+           '()
+           `(("valgrind" ,valgrind)))))
     (arguments
      `(;; Not designed for parallel testing.
        ;; See https://github.com/lz4/lz4/issues/957#issuecomment-737419821
