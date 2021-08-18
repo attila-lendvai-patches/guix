@@ -2735,9 +2735,10 @@ formats.")
                           "platex-dev eptex" "uplatex-dev euptex"
                           "csplain pdftex" "mf mf-nowin" "mex pdftex" "pdfmex pdftex"
                           "luacsplain luatex" "optex luatex"
-                          ;; LuaJIT is not ported to powerpc64le* yet and
+                          ;; LuaJIT is not ported to powerpc64le* or riscv yet and
                           ;; building these fail on powerpc.
-                          ,@(if (target-powerpc?)
+                          ,@(if (or (target-powerpc?)
+                                    (target-riscv?))
                               '("luajittex" "luajithbtex" "mfluajit") '())
                           "cont-en xetex" "cont-en pdftex" "pdfcsplain xetex"
                           "pdfcsplain pdftex" "pdfcsplain luatex" "cslatex pdftex"
