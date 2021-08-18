@@ -463,6 +463,14 @@ Makefile, simplifying the entire process for the developer.")
 
        #:phases
        (modify-phases %standard-phases
+         ,@(if (target-riscv?)
+             ;; TODO: merge this into the libtool-skip-tests2.patch
+             `((add-after 'unpack 'skip-nopic-tests-on-riscv64
+                 (lambda _
+                   (substitute* '("tests/testsuite"
+                                  "tests/demo.at")
+                     (("mips") "mips*|riscv")))))
+             '())
          (add-before 'check 'pre-check
            (lambda* (#:key inputs native-inputs #:allow-other-keys)
              ;; Run the test suite in parallel, if possible.
