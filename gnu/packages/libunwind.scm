@@ -2,6 +2,7 @@
 ;;; Copyright © 2013, 2014 Ludovic Courtès <ludo@gnu.org>
 ;;; Copyright © 2015 Mark H Weaver <mhw@netris.org>
 ;;; Copyright © 2019 Tobias Geerinckx-Rice <me@tobias.gr>
+;;; Copyright © 2021 Efraim Flashner <efraim@flashner.co.il>
 ;;;
 ;;; This file is part of GNU Guix.
 ;;;
@@ -22,8 +23,10 @@
   #:use-module (guix packages)
   #:use-module (gnu packages)
   #:use-module (guix download)
+  #:use-module (guix git-download)
   #:use-module (guix build-system gnu)
-  #:use-module (guix licenses))
+  #:use-module (guix licenses)
+  #:use-module (gnu packages autotools))
 
 (define-public libunwind
   (package
@@ -53,3 +56,26 @@ call-chain (non-local goto).  The API supports both local (same-process) and
 remote (across-process) operation.  As such, the API is useful in a number of
 applications.")
     (license x11)))
+
+(define-public libunwind-next
+  ;; Libunwind gained support for riscv64-linux since the last release, but
+  ;; backporting that support isn't feasable.
+  (package
+    (inherit libunwind)
+    (name "libunwind-next")
+    (version "1.6.0-rc1")
+    (source (origin
+             ;; The generated tarball FTBFS on riscv64-linux, use git instead.
+             ;; https://github.com/libunwind/libunwind/issues/289
+             (method git-fetch)
+             (uri (git-reference
+                    (url "https://github.com/libunwind/libunwind")
+                    (commit (string-append "v" version))))
+             (file-name (git-file-name name version))
+             (sha256
+              (base32
+               "0zmmn0zb4mfk2akgb8d67y92nmx25gcrqad7bq9dzill79vbcqsv"))))
+    (arguments
+     `(#:tests? #t))
+    (native-inputs
+     (list autoconf automake libtool))))
