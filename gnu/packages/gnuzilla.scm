@@ -363,7 +363,8 @@ in C/C++.")
               (file-name (git-file-name "mozjs" version))
               (sha256
                (base32
-                "1xl6avsj9gkgma71p56jzs7nasc767k3n1frnmri5pad4rj94bij"))))
+                "1xl6avsj9gkgma71p56jzs7nasc767k3n1frnmri5pad4rj94bij"))
+              (patches (search-patches "mozjs60-riscv64-support.patch"))))
     (arguments
      `(#:tests? #f ; FIXME: all tests pass, but then the check phase fails anyway.
        #:test-target "check-jstests"
@@ -399,6 +400,14 @@ in C/C++.")
                       (cons (string-append "--prefix=" out)
                             configure-flags))
                #t)))
+         (add-after 'unpack 'update-config-scripts
+           (lambda* (#:key native-inputs inputs #:allow-other-keys)
+             (for-each (lambda (file)
+                             (install-file
+                               (search-input-file
+                                 (or native-inputs inputs)
+                                 (string-append "/bin/" file)) "build/autoconf"))
+                           '("config.guess" "config.sub"))))
          (add-after 'unpack 'disable-broken-tests
            (lambda _
              ;; This test assumes that /bin exists and contains certain
@@ -408,6 +417,7 @@ in C/C++.")
     (native-inputs
      `(("autoconf" ,autoconf)
        ("automake" ,automake)
+       ("config" ,config)
        ("which" ,which)
        ("perl" ,perl)
        ("pkg-config" ,pkg-config)
