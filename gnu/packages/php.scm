@@ -5,6 +5,7 @@
 ;;; Copyright © 2018 Ricardo Wurmus <rekado@elephly.net>
 ;;; Copyright © 2019 Oleg Pykhalov <go.wigust@gmail.com>
 ;;; Copyright © 2020 Maxim Cournoyer <maxim.cournoyer@gmail.com>
+;;; Copyright © 2021 Efraim Flashner <efraim@flashner.co.il>
 ;;;
 ;;; This file is part of GNU Guix.
 ;;;
@@ -196,6 +197,14 @@
                                 "sapi/cli/tests/upload_2G.phpt"
                                 "Zend/tests/concat_003.phpt")))
                    '())
+             ,@(if (target-riscv?)
+                 ;; Drop tests known to fail on riscv64.
+                 '((for-each delete-file
+                             (list
+                               ;; extensive backtracking
+                               "ext/fileinfo/tests/cve-2014-3538-nojit.phpt"
+                               "ext/fileinfo/tests/cve-2014-3538.phpt")))
+                 '())
 
              ,@(if (target-ppc64le?)
                    ;; Drop tests known to fail on powerpc64le.
