@@ -454,7 +454,9 @@ menu to select one of the installed operating systems.")
        ("libyaml" ,libyaml)
        ("pkg-config" ,pkg-config)
        ("swig" ,swig)
-       ("valgrind" ,valgrind)))
+       ,@(if (target-riscv?)
+           '()
+           `(("valgrind" ,valgrind)))))
     (inputs
      `(("python" ,python)))
     (arguments
