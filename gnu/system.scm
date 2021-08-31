@@ -11,7 +11,7 @@
 ;;; Copyright © 2020 Florian Pelz <pelzflorian@pelzflorian.de>
 ;;; Copyright © 2020 Maxim Cournoyer <maxim.cournoyer@gmail.com>
 ;;; Copyright © 2020 Jan (janneke) Nieuwenhuizen <jannek@gnu.org>
-;;; Copyright © 2020 Efraim Flashner <efraim@flashner.co.il>
+;;; Copyright © 2020, 2021 Efraim Flashner <efraim@flashner.co.il>
 ;;; Copyright © 2021 Maxime Devos <maximedevos@telenet.be>
 ;;; Copyright © 2021 raid5atemyhomework <raid5atemyhomework@protonmail.com>
 ;;;
@@ -595,6 +595,7 @@ mapped-device '~a' may not be mounted by the bootloader.~%")
    ((string-prefix? "arm" target) "zImage")
    ((string-prefix? "mips" target) "vmlinuz")
    ((string-prefix? "aarch64" target) "Image")
+   ((string-prefix? "riscv64" target) "Image")
    (else "bzImage")))
 
 (define (operating-system-kernel-file os)
