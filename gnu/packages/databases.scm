@@ -1047,7 +1047,8 @@ and high-availability (HA).")
               (sha256
                (base32
                 "1kf0gcsrl5n25rjlvkh87aywmn28kbwvakm5c7j1qpr4j01y34za"))
-              (patches (search-patches "postgresql-disable-resolve_symlinks.patch"))))
+              (patches (search-patches "postgresql-disable-resolve_symlinks.patch"
+                                       "postgresql-riscv-spinlocks.patch"))))
     (build-system gnu-build-system)
     (arguments
      `(#:configure-flags '("--with-uuid=e2fs" "--with-openssl"
