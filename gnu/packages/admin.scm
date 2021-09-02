@@ -1231,6 +1231,21 @@ connection alive.")
                        (setenv "BUILD_CC" "gcc")
                        #t)))
                  '())
+           (add-before 'build 'update-config-scripts
+             (lambda* (#:key native-inputs inputs #:allow-other-keys)
+               (for-each (lambda (file)
+                               (install-file
+                                 (search-input-file
+                                   (or native-inputs inputs)
+                                   (string-append "/bin/" file)) "."))
+                         '("config.guess" "config.sub"))
+               (for-each (lambda (file)
+                               (install-file
+                                 (search-input-file
+                                   (or native-inputs inputs)
+                                   (string-append "/bin/" file))
+                                 (string-append "bind/bind-" ,bind-version)))
+                         '("config.guess" "config.sub"))))
            (add-after 'configure 'post-configure
              (lambda* (#:key outputs #:allow-other-keys)
                ;; Point to the right client script, which will be
@@ -1336,6 +1351,7 @@ connection alive.")
                      (base32
                       "0hhkb4d14hvly2751cxl2s2xyim3bri8qaisgkcm456xfi5wpy6b"))))
 
+                ("config" ,config)
                 ("coreutils*" ,coreutils)
                 ("sed*" ,sed)))
 
