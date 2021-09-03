@@ -833,9 +833,11 @@ the Monero GUI client.")
     (license license:bsd-3)))
 
 (define-public python-trezor-agent
+  ;; It is called 'libagent' in pypi; i.e. this is the library as opposed to
+  ;; the toplevel app called trezor-agent.
   (package
     (name "python-trezor-agent")
-    (version "0.13.1")
+    (version "0.14.2")
     (source
      (origin
        (method git-fetch)
@@ -844,7 +846,8 @@ the Monero GUI client.")
              (commit (string-append "v" version))))
        (file-name (git-file-name name version))
        (sha256
-        (base32 "0q99vbfd3h85s8rnjipnmldixabqmmlk5w9karv6f0rhyi54f4zv"))))
+        (base32 "0nl44ldfw9s2v3p7g5bldfw3ds2hz9r28j42bpnp8bj0v5na3ivk"))
+       (patches (search-patches "trezor-agent-fix-argv0.patch"))))
     (build-system python-build-system)
     (arguments
      `(#:phases
@@ -863,11 +866,12 @@ the Monero GUI client.")
              (add-installed-pythonpath inputs outputs)
              (invoke "py.test"))))))
     (propagated-inputs
-     `(("python-configargparse" ,python-configargparse)
+     `(("python-pynacl" ,python-pynacl)
+       ("python-configargparse" ,python-configargparse)
        ("python-daemon" ,python-daemon)
        ("python-docutils" ,python-docutils)
        ("python-ecdsa" ,python-ecdsa)
-       ("python-ed25519" ,python-ed25519)
+       ("python-hidapi" ,python-hidapi)
        ("python-mnemonic" ,python-mnemonic)
        ("python-pymsgbox" ,python-pymsgbox)
        ("python-semver" ,python-semver)
@@ -986,16 +990,35 @@ Nano dongle.")
 (define-public python-trezor
   (package
     (name "python-trezor")
-    (version "0.12.1")
+    (version "0.12.3")
     (source
       (origin
-        (method url-fetch)
-        (uri (pypi-uri "trezor" version))
+        (method git-fetch)
+        (uri (git-reference
+              (url "https://github.com/trezor/trezor-firmware/")
+              (commit (string-append "python/v" version))))
+        (file-name (git-file-name name version))
         (sha256
-          (base32 "1w19m9lws55k9sjhras47hpfpqwq1jm5vy135nj65yhkblygqg19"))))
+         (base32 "0wdm1y5zli6w09zbpjqc6rbcs1b4hjq007mbh7xdr17prbnqprac"))
+        (modules '((guix build utils) (srfi srfi-26) (srfi srfi-1) (ice-9 ftw)))
+        (snippet
+         '(begin
+            ;; Delete everything except ./python/
+            (for-each delete-file-recursively
+                      (scandir "./" (negate (cut member <> '("python" "." "..")
+                                                 string=))))
+            ;; Move ./python/* to the toplevel
+            (for-each (lambda (file-name)
+                        (rename-file (string-append "./python/" file-name)
+                                     (string-append "./" file-name)))
+                      (scandir "./python/"
+                               (negate (cut member <> '("." "..") string=))))
+            (delete-file-recursively "./python")
+            #t))))
     (build-system python-build-system)
     (propagated-inputs
-     `(("python-click" ,python-click)
+     `(("python-attrs" ,python-attrs)
+       ("python-click" ,python-click)
        ("python-construct" ,python-construct)
        ("python-ecdsa" ,python-ecdsa)
        ("python-libusb1" ,python-libusb1)
@@ -1074,16 +1097,39 @@ the KeepKey Hardware Wallet.")
 (define-public trezor-agent
   (package
     (name "trezor-agent")
-    (version "0.10.0")
+    (version "0.11.0")
     (source
      (origin
-       (method url-fetch)
-       (uri (pypi-uri "trezor_agent" version))
+       (method git-fetch)
+       (uri (git-reference
+             (url "https://github.com/romanz/trezor-agent")
+             ;; The version mismatch is not a mistake. Multiple python
+             ;; apps/packages are in the same git repo, and they have
+             ;; different versions. The git tag seems to track libagent,
+             ;; i.e. python-trezor-agent in the Guix namespace.
+             ;; See e.g. ./agents/trezor/setup.py
+             (commit "v0.14.2")))
+       (file-name (git-file-name name version))
        (sha256
         (base32
-         "144657c7bn0a667dq5fv5r6j7iilxf3h9agj29v1m2qpq40g0az8"))))
+         "0nl44ldfw9s2v3p7g5bldfw3ds2hz9r28j42bpnp8bj0v5na3ivk"))
+       (modules '((guix build utils) (srfi srfi-26) (srfi srfi-1) (ice-9 ftw)))
+       (snippet
+        '(begin
+           ;; Delete everything except ./agents/trezor/
+           (for-each delete-file-recursively
+                     (filter (lambda (full-name)
+                               (not (string-prefix? "./agents/trezor/" full-name)))
+                             (find-files ".")))
+           ;; Move ./agents/trezor/* to the toplevel
+           (for-each (lambda (file-name)
+                       (rename-file (string-append "./agents/trezor/" file-name)
+                                    (string-append "./" file-name)))
+                     (scandir "./agents/trezor/"
+                              (negate (cut member <> '("." "..") string=))))
+           (delete-file-recursively "./agents")
+           #t))))
     (arguments
-     ;; Tests fail with "AttributeError: module 'attr' has no attribute 's'".
      `(#:phases
        (modify-phases %standard-phases
          (add-after 'wrap 'fixup-agent-py
@@ -1091,14 +1137,14 @@ the KeepKey Hardware Wallet.")
              (let* ((out (assoc-ref outputs "out")))
                ;; overwrite the wrapper with the real thing.
                (install-file "./trezor_agent.py"
-                             (string-append out "/bin"))
-             #t))))))
+                             (string-append out "/bin")))
+             #t)))))
     (build-system python-build-system)
     (inputs
      `(("python-trezor" ,python-trezor)
        ("python-trezor-agent" ,python-trezor-agent)))
     (native-inputs
-     `(("python-hidapi" ,python-hidapi)))
+     `(("python-attrs" ,python-attrs))) ; for the tests
     (home-page "https://github.com/romanz/trezor-agent")
     (synopsis "Using Trezor as hardware SSH/GPG agent")
     (description "This package allows using Trezor as a hardware SSH/GPG
@@ -1301,7 +1347,7 @@ trezord as a regular user instead of needing to it run as root.")
 (define-public trezord
   (package
     (name "trezord")
-    (version "2.0.30")
+    (version "2.0.31")
     (source
      (origin
        (method git-fetch)
@@ -1310,7 +1356,7 @@ trezord as a regular user instead of needing to it run as root.")
              (commit (string-append "v" version))))
        (sha256
         (base32
-         "1hzvk0wfgg7b4wpqjk3738yqxlv3pj5i7zxwm0jady2h97hmrqrr"))
+         "130nhk1pnr3xx9qkcij81mm3jxrl5zvvdqhvrgvrikqg3zlb6v5b"))
        (file-name (git-file-name name version))))
     (build-system go-build-system)
     (arguments
