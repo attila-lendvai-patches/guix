@@ -3,6 +3,7 @@
 ;;; Copyright © 2017, 2019 Mathieu Othacehe <m.othacehe@gmail.com>
 ;;; Copyright © 2020 Julien Lepiller <julien@lepiller.eu>
 ;;; Copyright © 2020 Jan (janneke) Nieuwenhuizen <janneke@gnu.org>
+;;; Copyright © 2021 Efraim Flashner <efraim@flashner.co.il>
 ;;;
 ;;; This file is part of GNU Guix.
 ;;;
@@ -42,7 +43,8 @@
             u-boot-puma-rk3399-bootloader
             u-boot-rock64-rk3328-bootloader
             u-boot-rockpro64-rk3399-bootloader
-            u-boot-wandboard-bootloader))
+            u-boot-wandboard-bootloader
+            u-boot-sifive-unmatched-bootloader))
 
 (define install-u-boot
   #~(lambda (bootloader root-index image)
@@ -126,6 +128,16 @@
                               image (* 16384 512)))))
 
 (define install-pinebook-pro-rk3399-u-boot install-rockpro64-rk3399-u-boot)
+
+(define install-sifive-unmatched-u-boot
+  #~(lambda (bootloader root-index image)
+      (let ((spl (string-append bootloader "/libexec/spl/u-boot-spl.bin"))
+            (u-boot (string-append bootloader "/libexec/u-boot.itb")))
+        ;; https://source.denx.de/u-boot/u-boot/-/blob/master/doc/board/sifive/unmatched.rst
+        (write-file-on-device spl (stat:size (stat spl))
+                              image (* 34 512))
+        (write-file-on-device u-boot (stat:size (stat u-boot))
+                              image (* 2082 512)))))
 
 
 
@@ -255,3 +267,9 @@
    (inherit u-boot-bootloader)
    (package u-boot-pinebook-pro-rk3399)
    (disk-image-installer install-pinebook-pro-rk3399-u-boot)))
+
+(define u-boot-sifive-unmatched-bootloader
+  (bootloader
+   (inherit u-boot-bootloader)
+   (package u-boot-sifive-unmatched)
+   (disk-image-installer install-sifive-unmatched-u-boot)))
