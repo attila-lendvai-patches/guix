@@ -68,6 +68,7 @@
             iso9660-image
             arm32-disk-image
             arm64-disk-image
+            riscv64-disk-image
 
             image-with-os
             efi-raw-image-type
@@ -76,6 +77,7 @@
             uncompressed-iso-image-type
             arm32-image-type
             arm64-image-type
+            riscv64-image-type
 
             image-with-label
             system-image
@@ -145,6 +147,15 @@
    (inherit (arm32-disk-image offset))
    (target "aarch64-linux-gnu")))
 
+(define* (riscv64-disk-image #:optional (offset root-offset))
+  (image
+    (format 'disk-image)
+    (target "riscv64-linux-gnu")
+    (partitions
+      (list (partition
+              (inherit root-partition)
+              (offset offset))))))
+
 
 ;;;
 ;;; Images types.
@@ -195,6 +206,11 @@ set to the given OS."
   (image-type
    (name 'arm64-raw)
    (constructor (cut image-with-os (arm64-disk-image) <>))))
+
+(define riscv64-image-type
+  (image-type
+   (name 'riscv64-raw)
+   (constructor (cut image-with-os (riscv64-disk-image) <>))))
 
 
 ;;
