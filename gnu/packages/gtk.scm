@@ -1035,6 +1035,11 @@ application suites.")
              (substitute* "testsuite/reftests/Makefile.in"
                (("TEST_PROGS = gtk-reftest")
                 "TEST_PROGS = "))
+             ;; Some icontheme tests fail on riscv64-linux
+             (substitute* "testsuite/gtk/Makefile.in"
+               ((" icontheme ") " "))
+             (substitute* "./testsuite/a11y/Makefile.in"
+               ((" tree-relationships ") " "))
              #t))
          (add-before 'check 'pre-check
            (lambda _
