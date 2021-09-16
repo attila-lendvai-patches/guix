@@ -22,6 +22,7 @@
 
 (define-module (gnu packages idris)
   #:use-module (gnu packages)
+  #:use-module (gnu packages bash)
   #:use-module (gnu packages haskell-check)
   #:use-module (gnu packages haskell-web)
   #:use-module (gnu packages haskell-xyz)
@@ -35,7 +36,8 @@
   #:use-module (guix git-download)
   #:use-module (guix utils)
   #:use-module ((guix licenses) #:prefix license:)
-  #:use-module (guix packages))
+  #:use-module (guix packages)
+  #:use-module (guix utils))
 
 (define-public idris
   (package
@@ -56,7 +58,8 @@
      (list perl ghc-cheapskate ghc-tasty ghc-tasty-golden
            ghc-tasty-rerun))
     (inputs
-     (list gmp
+     (list bash-minimal
+           gmp
            ncurses
            ghc-aeson
            ghc-annotated-wl-pprint
@@ -132,7 +135,13 @@
                    (static (assoc-ref outputs "static"))
                    (filename "/lib/idris/rts/libidris_rts.a"))
                (rename-file (string-append static filename)
-                            (string-append out filename))))))))
+                            (string-append out filename)))))
+         (add-before 'check 'wrap-program
+           (lambda* (#:key outputs inputs #:allow-other-keys)
+             (let* ((out (assoc-ref outputs "out"))
+                    (exe (string-append out "/bin/idris")))
+               (wrap-program exe
+                 `("IDRIS_CC" = (,',(cc-for-target))))))))))
     (native-search-paths
      (list (search-path-specification
             (variable "IDRIS_LIBRARY_PATH")
