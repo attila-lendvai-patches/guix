@@ -134,4 +134,6 @@
    (name "vagrantc"))
   (;; primary: "C955 CC5D C048 7FB1 7966  40A9 199A F6A3 67E9 4ABB"
    "7238 7123 8EAC EB63 4548  5857 167F 8EA5 001A FA9C"
-   (name "wigust"))))
+   (name "wigust"))
+  ("2E4F C7F5 07AB F022 36D3  D51F 31EE D3BE 74EC 3A1F"
+   (name "attila-lendvai"))))
