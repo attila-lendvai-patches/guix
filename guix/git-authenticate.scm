@@ -30,6 +30,7 @@
                 #:select (cache-directory with-atomic-file-output))
   #:use-module ((guix build utils)
                 #:select (mkdir-p))
+  #:use-module (guix diagnostics)
   #:use-module (guix progress)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-11)
@@ -37,7 +38,10 @@
   #:use-module (srfi srfi-34)
   #:use-module (srfi srfi-35)
   #:use-module (rnrs bytevectors)
+  #:use-module ((rnrs exceptions)
+                #:select (raise-continuable))
   #:use-module (rnrs io ports)
+  #:use-module (ice-9 exceptions)
   #:use-module (ice-9 match)
   #:autoload   (ice-9 pretty-print) (pretty-print)
   #:export (read-authorizations
@@ -159,11 +163,10 @@ return a list of authorized fingerprints."
              (string-downcase (string-filter char-set:graphic fingerprint))))
           fingerprints))))
 
-(define* (commit-authorized-keys repository commit
-                                 #:optional (default-authorizations '()))
-  "Return the list of OpenPGP fingerprints authorized to sign COMMIT, based on
-authorizations listed in its parent commits.  If one of the parent commits
-does not specify anything, fall back to DEFAULT-AUTHORIZATIONS."
+(define (authorized-keys-at-commit repository commit default-authorizations)
+  "Return the list of authorized key fingerprints from the '.guix-authorizations'
+file at the given commit."
+
   (define (parents-have-authorizations-file? commit)
     ;; Return true if at least one of the parents of COMMIT has the
     ;; '.guix-authorizations' file.
@@ -185,28 +188,35 @@ does not specify anything, fall back to DEFAULT-AUTHORIZATIONS."
 to remove '.guix-authorizations' file")
                                  (oid->string (commit-id commit)))))))
 
-  (define (commit-authorizations commit)
-    (catch 'git-error
-      (lambda ()
-        (let* ((tree  (commit-tree commit))
-               (entry (tree-entry-bypath tree ".guix-authorizations"))
-               (blob  (blob-lookup repository (tree-entry-id entry))))
-          (read-authorizations
-           (open-bytevector-input-port (blob-content blob)))))
-      (lambda (key error)
-        (if (= (git-error-code error) GIT_ENOTFOUND)
-            (begin
-              ;; Prevent removal of '.guix-authorizations' since it would make
-              ;; it trivial to force a fallback to DEFAULT-AUTHORIZATIONS.
-              (assert-parents-lack-authorizations commit)
-              default-authorizations)
-            (throw key error)))))
+  (catch 'git-error
+    (lambda ()
+      (let* ((tree  (commit-tree commit))
+             (entry (tree-entry-bypath tree ".guix-authorizations"))
+             (blob  (blob-lookup repository (tree-entry-id entry))))
+        (read-authorizations
+         (open-bytevector-input-port (blob-content blob)))))
+    (lambda (key error)
+      (if (= (git-error-code error) GIT_ENOTFOUND)
+          (begin
+            ;; Prevent removal of '.guix-authorizations' since it would make
+            ;; it trivial to force a fallback to DEFAULT-AUTHORIZATIONS.
+            (assert-parents-lack-authorizations commit)
+            default-authorizations)
+          (throw key error)))))
 
+(define* (commit-authorized-keys repository commit
+                                 #:optional (default-authorizations '()))
+  "Return the list of OpenPGP fingerprints authorized to sign COMMIT, based on
+authorizations listed in its parent commits.  If one of the parent commits
+does not specify anything, fall back to DEFAULT-AUTHORIZATIONS."
   (match (commit-parents commit)
     (() default-authorizations)
     (parents
      (apply lset-intersection bytevector=?
-            (map commit-authorizations parents)))))
+            (map (lambda (commit)
+                   (authorized-keys-at-commit repository commit
+                                              default-authorizations))
+                 parents)))))
 
 (define* (authenticate-commit repository commit keyring
                               #:key (default-authorizations '()))
@@ -236,8 +246,8 @@ not specify anything, fall back to DEFAULT-AUTHORIZATIONS."
             (condition
              (&unauthorized-commit-error (commit id)
                                          (signing-key signing-key)))
-            (formatted-message (G_ "commit ~a not signed by an authorized \
-key: ~a")
+            (formatted-message (G_ "commit ~a is signed by an unauthorized \
+key: ~a\nSee info guix \"Specifying Channel Authorizations\".")
                                (oid->string id)
                                (openpgp-format-fingerprint
                                 (openpgp-public-key-fingerprint
@@ -356,7 +366,8 @@ authenticated (only COMMIT-ID is written to cache, though)."
                  (base64-encode
                   (sha256 (string->utf8 (repository-directory repository))))))
 
-(define (verify-introductory-commit repository keyring commit expected-signer)
+(define (verify-introductory-commit repository commit expected-signer keyring
+                                    authorizations)
   "Look up COMMIT in REPOSITORY, and raise an exception if it is not signed by
 EXPECTED-SIGNER."
   (define actual-signer
@@ -364,13 +375,26 @@ EXPECTED-SIGNER."
      (commit-signing-key repository (commit-id commit) keyring)))
 
   (unless (bytevector=? expected-signer actual-signer)
-    (raise (formatted-message (G_ "initial commit ~a is signed by '~a' \
+    (raise (make-compound-condition
+            (condition (&unauthorized-commit-error (commit (commit-id commit))
+                                                   (signing-key actual-signer)))
+            (formatted-message (G_ "initial commit ~a is signed by '~a' \
 instead of '~a'")
-                              (oid->string (commit-id commit))
-                              (openpgp-format-fingerprint actual-signer)
-                              (openpgp-format-fingerprint expected-signer)))))
+                               (oid->string (commit-id commit))
+                               (openpgp-format-fingerprint actual-signer)
+                               (openpgp-format-fingerprint expected-signer)))))
+  (unless (member actual-signer
+                  (authorized-keys-at-commit repository commit authorizations)
+                  bytevector=?)
+    (raise-continuable
+     (make-compound-condition
+      (condition (&warning))
+      (formatted-message (G_ "initial commit ~a does not add \
+the key it is signed with (~a) to the '.guix-authorizations' file.")
+                         (oid->string (commit-id commit))
+                         (openpgp-format-fingerprint actual-signer))))))
 
-(define* (authenticate-repository repository start signer
+(define* (authenticate-repository repository intro-commit-hash intro-signer
                                   #:key
                                   (keyring-reference "keyring")
                                   (cache-key (repository-cache-key repository))
@@ -380,11 +404,12 @@ instead of '~a'")
                                   (historical-authorizations '())
                                   (make-reporter
                                    (const progress-reporter/silent)))
-  "Authenticate REPOSITORY up to commit END, an OID.  Authentication starts
-with commit START, an OID, which must be signed by SIGNER; an exception is
-raised if that is not the case.  Commits listed in AUTHENTIC-COMMITS and their
-closure are considered authentic.  Return an alist mapping OpenPGP public keys
-to the number of commits signed by that key that have been traversed.
+  "Authenticate REPOSITORY up to commit END, an OID.  Authentication starts with
+commit INTRO-COMMIT-HASH, an OID, which must be signed by INTRO-SIGNER; an
+exception is raised if that is not the case.  Commits listed in
+AUTHENTIC-COMMITS and their closure are considered authentic.  Return an
+alist mapping OpenPGP public keys to the number of commits signed by that
+key that have been traversed.
 
 The OpenPGP keyring is loaded from KEYRING-REFERENCE in REPOSITORY, where
 KEYRING-REFERENCE is the name of a branch.  The list of authenticated commits
@@ -393,8 +418,10 @@ is cached in the authentication cache under CACHE-KEY.
 HISTORICAL-AUTHORIZATIONS must be a list of OpenPGP fingerprints (bytevectors)
 denoting the authorized keys for commits whose parent lack the
 '.guix-authorizations' file."
-  (define start-commit
-    (commit-lookup repository start))
+
+  (define intro-commit
+    (commit-lookup repository intro-commit-hash))
+
   (define end-commit
     (commit-lookup repository end))
 
@@ -404,36 +431,37 @@ denoting the authorized keys for commits whose parent lack the
   (define authenticated-commits
     ;; Previously-authenticated commits that don't need to be checked again.
     (filter-map (lambda (id)
+                  ;; We need to tolerate when cached commits disappear due to
+                  ;; --allow-downgrades.
                   (false-if-git-not-found
                    (commit-lookup repository (string->oid id))))
                 (append (previously-authenticated-commits cache-key)
-                        authentic-commits)))
+                        authentic-commits
+                        ;; The intro commit is unconditionally trusted.
+                        (list (oid->string intro-commit-hash)))))
 
   (define commits
     ;; Commits to authenticate, excluding the closure of
     ;; AUTHENTICATED-COMMITS.
-    (commit-difference end-commit start-commit
-                       authenticated-commits))
+    (commit-difference end-commit intro-commit
+                             authenticated-commits))
 
-  ;; When COMMITS is empty, it's because END-COMMIT is in the closure of
-  ;; START-COMMIT and/or AUTHENTICATED-COMMITS, in which case it's known to
-  ;; be authentic already.
-  (if (null? commits)
-      '()
-      (let ((reporter (make-reporter start-commit end-commit commits)))
-        ;; If it's our first time, verify START-COMMIT's signature.
-        (when (null? authenticated-commits)
-          (verify-introductory-commit repository keyring
-                                      start-commit signer))
+  (verify-introductory-commit repository intro-commit
+                              intro-signer keyring
+                              historical-authorizations)
 
-        (let ((stats (call-with-progress-reporter reporter
-                       (lambda (report)
-                         (authenticate-commits repository commits
-                                               #:keyring keyring
-                                               #:default-authorizations
-                                               historical-authorizations
-                                               #:report-progress report)))))
-          (cache-authenticated-commit cache-key
-                                      (oid->string (commit-id end-commit)))
+  (let* ((reporter (make-reporter intro-commit end-commit commits))
+         (stats (call-with-progress-reporter reporter
+                  (lambda (report)
+                    (authenticate-commits repository commits
+                                          #:keyring keyring
+                                          #:default-authorizations
+                                          historical-authorizations
+                                          #:report-progress report)))))
+    ;; Note that this will make the then current end commit of any channel,
+    ;; that has been used/trusted in the past with a channel introduction,
+    ;; remain trusted until the cache is cleared.
+    (cache-authenticated-commit cache-key
+                                (oid->string (commit-id end-commit)))
 
-          stats))))
+    stats))

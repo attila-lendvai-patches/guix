@@ -347,8 +347,8 @@ commits)...~%")
     (progress-reporter/bar (length commits)))
 
   (define authentic-commits
-    ;; Consider the currently-used commit of CHANNEL as authentic so
-    ;; authentication can skip it and all its closure.
+    ;; Optimization: consider the currently-used commit of CHANNEL as
+    ;; authentic, so that authentication can skip it and all its closure.
     (match (find (lambda (candidate)
                    (eq? (channel-name candidate) (channel-name channel)))
                  (current-channels))
