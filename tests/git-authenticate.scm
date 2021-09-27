@@ -18,6 +18,7 @@
 
 (define-module (test-git-authenticate)
   #:use-module (git)
+  #:use-module (guix diagnostics)
   #:use-module (guix git)
   #:use-module (guix git-authenticate)
   #:use-module (guix openpgp)
@@ -28,6 +29,10 @@
   #:use-module (srfi srfi-34)
   #:use-module (srfi srfi-64)
   #:use-module (rnrs bytevectors)
+  #:use-module ((rnrs conditions)
+                #:select (warning?))
+  #:use-module ((rnrs exceptions)
+                #:select (with-exception-handler))
   #:use-module (rnrs io ports))
 
 ;; Test the (guix git-authenticate) tools.
@@ -225,6 +230,133 @@
                                              devel1 merge)
                                        #:keyring-reference "master")
                  #f)))))))
+
+(unless (gpg+git-available?) (test-skip 1))
+(test-assert "signed commits, .guix-authorizations, channel-introduction"
+  (let* ((result   #true)
+         (key1     %ed25519-public-key-file)
+         (key2     %ed25519-2-public-key-file)
+         (key3     %ed25519-3-public-key-file))
+    (with-fresh-gnupg-setup (list key1 %ed25519-secret-key-file
+                                  key2 %ed25519-2-secret-key-file
+                                  key3 %ed25519-3-secret-key-file)
+      (with-temporary-git-repository dir
+          `((checkout "keyring" orphan)
+            (add "signer1.key" ,(call-with-input-file key1 get-string-all))
+            (add "signer2.key" ,(call-with-input-file key2 get-string-all))
+            (add "signer3.key" ,(call-with-input-file key3 get-string-all))
+            (commit "keyring commit")
+
+            (checkout "main" orphan)
+            (add "noise0")
+            (add ".guix-authorizations"
+                 ,(object->string
+                   `(authorizations
+                     (version 0)
+                     ((,(key-fingerprint key1) (name "Alice"))
+                      (,(key-fingerprint key3) (name "Charlie"))))))
+            (commit "commit 0" (signer ,(key-fingerprint key3)))
+            (add "noise1")
+            (commit "commit 1" (signer ,(key-fingerprint key1)))
+            (add "noise2")
+            (commit "commit 2" (signer ,(key-fingerprint key1))))
+        (with-repository dir repo
+          (let* ((commit-0 (find-commit repo "commit 0"))
+                 (check-from
+                  (lambda* (commit #:key (should-fail? #false) (key key1)
+                                   (historical-authorizations
+                                    ;; key3 is trusted to authorize commit 0
+                                    (list (key-fingerprint-vector key3))))
+                    (guard (c ((unauthorized-commit-error? c)
+                               (if should-fail?
+                                   c
+                                   (let ((port (current-output-port)))
+                                     (format port "FAILURE: Unexpected exception at commit '~s':~%"
+                                             commit)
+                                     (print-exception port (stack-ref (make-stack #t) 1)
+                                                      c (exception-args c))
+                                     (set! result #false)
+                                     '()))))
+                      (format #true "~%~%Checking ~s, should-fail? ~s, repo commits:~%"
+                              commit should-fail?)
+                      ;; to be able to inspect in the logs
+                      (invoke "git" "-C" dir "log" "--reverse" "--pretty=oneline" "main")
+                      (set! commit (find-commit repo commit))
+                      (authenticate-repository
+                       repo
+                       (commit-id commit)
+                       (key-fingerprint-vector key)
+                       #:historical-authorizations historical-authorizations)
+                      (when should-fail?
+                        (format #t "FAILURE: Authenticating commit '~s' should have failed.~%" commit)
+                        (set! result #false))
+                      '()))))
+            (check-from "commit 0" #:key key3)
+            (check-from "commit 1")
+            (check-from "commit 2")
+            (with-git-repository dir
+                `((add "noise 3")
+                  ;; a commit with key2
+                  (commit "commit 3" (signer ,(key-fingerprint key2))))
+              ;; Should fail because it is signed with key2, not key1
+              (check-from "commit 3" #:should-fail? #true)
+              ;; Specify commit 3 as a channel-introduction signed with
+              ;; key2. This is valid, but it should warn the user, because
+              ;; .guix-authorizations is not updated to include key2, which
+              ;; means that any subsequent commits with the same key will be
+              ;; rejected.
+              (set! result
+                    (and result
+                         (let ((signalled? #false))
+                           (with-exception-handler
+                               (lambda (c)
+                                 (cond
+                                  ((not (warning? c))
+                                   (raise c))
+                                  ((formatted-message? c)
+                                   (format #true "warning (expected): ~a~%"
+                                           (apply format #false
+                                                  (formatted-message-string c)
+                                                  (formatted-message-arguments c)))
+                                   (set! signalled? #true)))
+                                 '())
+                             (lambda ()
+                               (check-from "commit 3" #:key key2)
+                               signalled?))))))
+            (with-git-repository dir
+                `((reset ,(oid->string (commit-id (find-commit repo "commit 2"))))
+                  (add "noise 4")
+                  ;; set it up properly
+                  (add ".guix-authorizations"
+                       ,(object->string
+                         `(authorizations
+                           (version 0)
+                           ((,(key-fingerprint key1) (name "Alice"))
+                            (,(key-fingerprint key2) (name "Bob"))))))
+                  (commit "commit 4" (signer ,(key-fingerprint key2))))
+              ;; This should fail because even though commit 4 adds key2 to
+              ;; .guix-authorizations, the commit itself is not authorized.
+              (check-from "commit 1" #:should-fail? #true)
+              ;; This should pass, because it's a valid channel intro at commit 4
+              (check-from "commit 4" #:key key2))
+            (with-git-repository dir
+                `((add "noise 5")
+                  (commit "commit 5" (signer ,(key-fingerprint key2))))
+              ;; This is not very intuitive: because commit 4 has once been
+              ;; used as a channel intro, it got marked as trusted in the
+              ;; ~/.cache/, and because commit 1 is one of its parent, it is
+              ;; also trusted.
+              (check-from "commit 1")
+              (check-from "commit 2")
+              ;; Should still be fine, but only when starting from commit 4
+              (check-from "commit 4" #:key key2))
+            (with-git-repository dir
+                `((add "noise 6")
+                  (commit "commit 6" (signer ,(key-fingerprint key1))))
+              (check-from "commit 1")
+              (check-from "commit 2")
+              (check-from "commit 4" #:key key2))))))
+    result))
 
 (unless (gpg+git-available?) (test-skip 1))
 (test-assert "signed commits, .guix-authorizations, authorized merge"
