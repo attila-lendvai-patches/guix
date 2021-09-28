@@ -45,6 +45,8 @@
   #:use-module (srfi srfi-34)
   #:use-module (srfi srfi-35)
   #:use-module (srfi srfi-39)
+  #:use-module ((rnrs conditions)
+                #:select (warning?))
   #:use-module (ice-9 match)
   #:use-module (ice-9 vlist)
   #:use-module (ice-9 popen)
@@ -651,19 +653,21 @@ connection.  Use with care."
 
 (define (call-with-store proc)
   "Call PROC with an open store connection."
-  (let ((store (open-connection)))
+  (let ((store '()))
     (define (thunk)
       (parameterize ((current-store-protocol-version
                       (store-connection-version store)))
         (call-with-values (lambda () (proc store))
           (lambda results
-            (close-connection store)
             (apply values results)))))
 
-    (with-exception-handler (lambda (exception)
-                              (close-connection store)
-                              (raise-exception exception))
-      thunk)))
+    (dynamic-wind
+      (lambda ()
+        (set! store (open-connection)))
+      thunk
+      (lambda ()
+        (close-connection store)
+        (set! store '())))))
 
 (define-syntax-rule (with-store store exp ...)
   "Bind STORE to an open connection to the store and evaluate EXPs;
