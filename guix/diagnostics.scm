@@ -50,6 +50,7 @@
             formatted-message?
             formatted-message-string
             formatted-message-arguments
+            emit-formatted-warning
 
             &fix-hint
             fix-hint?
@@ -164,6 +165,9 @@ messages."
   (begin
     (report-error args ...)
     (exit 1)))
+
+(define* (emit-formatted-warning fmt . args)
+  (emit-diagnostic fmt args #:prefix (G_ "warning: ") #:colors %warning-color))
 
 (define* (emit-diagnostic fmt args
                           #:key location (colors (color)) (prefix ""))

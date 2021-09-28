@@ -71,6 +71,8 @@
   #:use-module (srfi srfi-31)
   #:use-module (srfi srfi-34)
   #:use-module (srfi srfi-35)
+  #:use-module ((rnrs conditions)
+                #:select (warning?))
   #:autoload   (ice-9 ftw)  (scandir)
   #:use-module (ice-9 match)
   #:use-module (ice-9 format)
@@ -320,6 +322,11 @@ VARIABLE and return it, or #f if none was found."
                       '()
                       str)))
 
+(define (maybe-display-fix-hint obj)
+  (when (fix-hint? obj)
+    (display-hint (condition-fix-hint obj)))
+  obj)
+
 (define* (display-hint message
                        #:key (port (current-error-port))
                        #:rest arguments)
@@ -431,8 +438,7 @@ ARGS is the list of arguments received by the 'throw' handler."
                    (formatted-message-arguments obj)))
            (else
             (report-error (G_ "exception thrown: ~s~%") obj)))
-     (when (fix-hint? obj)
-       (display-hint (condition-fix-hint obj))))
+     (maybe-display-fix-hint obj))
     ((key args ...)
      (report-error (G_ "failed to load '~a':~%") file)
      (match args
@@ -842,13 +848,26 @@ directories:~{ ~a~}~%")
                      (cons (invoke-error-program c)
                            (invoke-error-arguments c))))
 
+             ((warning? c)
+              (match c
+                ((? formatted-message? c)
+                 (apply emit-formatted-warning
+                        (formatted-message-string c)
+                        (formatted-message-arguments c)))
+                (_
+                 ;; Ignore warnings that we cannot display in a meaningful way
+                 ;; to the user.  As a developer, you may peek using:
+                 ;; (emit-formatted-warning "~a" c)
+                 (values)))
+              (maybe-display-fix-hint c)
+              (values))
+
              ((formatted-message? c)
               (apply report-error
                      (and (error-location? c) (error-location c))
                      (gettext (formatted-message-string c) %gettext-domain)
                      (formatted-message-arguments c))
-              (when (fix-hint? c)
-                (display-hint (condition-fix-hint c)))
+              (maybe-display-fix-hint c)
               (exit 1))
 
              ;; On Guile 3.0.0, exceptions such as 'unbound-variable' are
@@ -872,8 +891,7 @@ directories:~{ ~a~}~%")
               (report-error (and (error-location? c) (error-location c))
                             (G_ "~a~%")
                             (gettext (condition-message c) %gettext-domain))
-              (when (fix-hint? c)
-                (display-hint (condition-fix-hint c)))
+              (maybe-display-fix-hint c)
               (exit 1)))
       (thunk)))
 

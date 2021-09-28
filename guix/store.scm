@@ -34,6 +34,8 @@
   #:autoload   (guix build syscalls) (terminal-columns)
   #:autoload   (guix build utils) (dump-port)
   #:use-module (rnrs bytevectors)
+  #:use-module ((rnrs conditions) #:select (warning?))
+  #:use-module ((rnrs exceptions) #:select (raise-continuable))
   #:use-module (ice-9 binary-ports)
   #:use-module ((ice-9 control) #:select (let/ec))
   #:use-module (ice-9 atomic)
@@ -662,8 +664,9 @@ connection.  Use with care."
             (apply values results)))))
 
     (with-exception-handler (lambda (exception)
-                              (close-connection store)
-                              (raise-exception exception))
+                              (unless (warning? exception)
+                                (close-connection store))
+                              (raise-continuable exception))
       thunk)))
 
 (define-syntax-rule (with-store store exp ...)
