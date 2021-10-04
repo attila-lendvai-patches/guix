@@ -346,6 +346,7 @@ e.g. \"google.golang.org/protobuf\".  The data is scraped from
 the https://pkg.go.dev/ web site."
   ;; Note: Only the *module* (rather than package) page has the README title
   ;; used as a synopsis on the https://pkg.go.dev web site.
+  (log.debug "Getting synopsis for ~S" module-name)
   (let* ((body (pkg.go.dev-info module-name))
          ;; Extract the text contained in a h2 child node of any
          ;; element marked with a "License" class attribute.
@@ -377,7 +378,12 @@ corresponding Guix license or 'unknown-license!"
                             ("GPL3" "GPL-3.0")
                             ("NIST" "NIST-PD")
                             (_ license)))
-                         'unknown-license!)))
+                         (begin
+                           (warning (G_ "Failed to identify license ~S.~%")
+                                    license)
+                           ;; This will put the license there as a string that
+                           ;; will error at compilation.
+                           license))))
               licenses))
 
 (define (fetch-go.mod goproxy module-path version)
@@ -550,7 +556,8 @@ DIRECTIVE."
 (define (make-vcs prefix regexp type)
   (%make-vcs prefix (make-regexp regexp) type))
 
-(define known-vcs
+;; TODO use define-constant
+(define +known-vcs+
   ;; See the following URL for the official Go equivalent:
   ;; https://github.com/golang/go/blob/846dce9d05f19a1f53465e62a304dea21b99f910/src/cmd/go/internal/vcs/vcs.go#L1026-L1087
   (list
@@ -587,16 +594,17 @@ hence the need to derive this information."
 
   (define (vcs-qualified-module-path->root-repo-url module-path)
     (let* ((vcs-qualifiers-group (string-join vcs-qualifiers "|"))
-           (pattern (format #f "^(.*(~a))(/|$)" vcs-qualifiers-group))
-           (m (string-match pattern module-path)))
-      (and=> m (cut match:substring <> 1))))
+           (pattern (format #f "^(.*(~a))(/|$)" vcs-qualifiers-group)))
+      (and=> (string-match pattern module-path)
+             (cut match:substring <> 1))))
 
   (or (and=> (find (lambda (vcs)
                      (string-prefix? (vcs-url-prefix vcs) module-path))
-                   known-vcs)
+                   +known-vcs+)
              (lambda (vcs)
                (match:substring (regexp-exec (vcs-root-regex vcs)
-                                             module-path) 1)))
+                                             module-path)
+                                1)))
       (vcs-qualified-module-path->root-repo-url module-path)
       module-path))
 
@@ -666,6 +674,7 @@ source."
 (define* (git-checkout-hash url reference algorithm)
   "Return the ALGORITHM hash of the checkout of URL at REFERENCE, a commit or
 tag."
+  (log.info "Fetching git repo at ~S, reference ~S" url reference)
   (define cache
     (string-append (or (getenv "TMPDIR") "/tmp")
                    "/guix-import-go-"
@@ -681,6 +690,7 @@ tag."
                   (update-cached-checkout url
                                           #:ref
                                           `(tag-or-commit . ,reference)))))
+    (log.debug " hashing at checkout ~S, commit ~S, reference ~S" checkout commit reference)
     (file-hash* checkout #:algorithm algorithm #:recursive? #true)))
 
 (define (vcs->origin vcs-type vcs-repo-url version)
@@ -688,8 +698,10 @@ tag."
 control system is being used."
   (case vcs-type
     ((git)
-     (let ((plain-version? (string=? version (go-version->git-ref version)))
-           (v-prefixed?    (string-prefix? "v" version)))
+     (let* ((git-ref        (go-version->git-ref version))
+            (plain-version? (string=? version git-ref))
+            (v-prefixed?    (string-prefix? "v" version)))
+       (log.debug "Version ~S converted to git reference ~S" version git-ref)
        `(origin
           (method git-fetch)
           (uri (git-reference
@@ -699,13 +711,12 @@ control system is being used."
                 ;; stripped of any 'v' prefixed.
                 (commit ,(if (and plain-version? v-prefixed?)
                              '(string-append "v" version)
-                             '(go-version->git-ref version)))))
+                             git-ref))))
           (file-name (git-file-name name version))
           (sha256
            (base32
             ,(bytevector->nix-base32-string
-              (git-checkout-hash vcs-repo-url (go-version->git-ref version)
-                                 (hash-algorithm sha256))))))))
+              (git-checkout-hash vcs-repo-url git-ref (hash-algorithm sha256))))))))
     ((hg)
      `(origin
         (method hg-fetch)
@@ -768,41 +779,104 @@ available versions:~{ ~a~}.")
   "Return the package S-expression corresponding to MODULE-PATH at VERSION, a Go package.
 The meta-data is fetched from the GOPROXY server and https://pkg.go.dev/.
 When VERSION is unspecified, the latest version available is used."
+  (log.info "~%Processing go module ~A@~A" module-path version)
   (let* ((available-versions (go-module-available-versions goproxy module-path))
          (version* (validate-version
                     (or (and version (ensure-v-prefix version))
                         (go-module-version-string goproxy module-path)) ;latest
                     available-versions
                     module-path))
-         (content (fetch-go.mod goproxy module-path version*))
-         (dependencies+versions (go.mod-requirements (parse-go.mod content)))
+         (go.mod (fetch-go.mod goproxy module-path version*))
+         (dependencies+versions (go.mod-requirements (parse-go.mod go.mod)))
          (dependencies (if pin-versions?
                            dependencies+versions
                            (map car dependencies+versions)))
-         (module-path-sans-suffix
-          (match:prefix (string-match "([\\./]v[0-9]+)?$" module-path)))
          (guix-name (go-module->guix-package-name module-path))
-         (root-module-path (module-path->repository-root module-path))
+         (repo-root (module-path->repository-root module-path))
          ;; The VCS type and URL are not included in goproxy information. For
          ;; this we need to fetch it from the official module page.
-         (meta-data (fetch-module-meta-data root-module-path))
+         (meta-data (fetch-module-meta-data repo-root))
+         (module-root-path (module-meta-import-prefix meta-data))
          (vcs-type (module-meta-vcs meta-data))
          (vcs-repo-url (module-meta-data-repo-url meta-data goproxy))
-         (synopsis (go-package-synopsis module-path))
-         (description (go-package-description module-path))
-         (licenses (go-package-licenses module-path)))
+         (raw-subdir (if (< (string-length module-root-path)
+                            (string-length module-path))
+                         (substring module-path
+                                    (+ 1 (string-length module-root-path)))
+                         #false))
+         (module-subdirectory raw-subdir)
+         (major-version (and=>
+                         (and raw-subdir
+                              (string-match ".*v([0-9]+)$" raw-subdir))
+                         (lambda (m)
+                           (let* ((v-postfix (match:substring m 1))
+                                  (ver (string->number v-postfix)))
+                             (log.debug " ~A matched as having a version-postfix: ~A"
+                                        raw-subdir v-postfix)
+                             (set! module-subdirectory
+                                   (substring raw-subdir 0
+                                              ;; Don't go negative when
+                                              ;; raw-subdir is a simple "v2".
+                                              (max 0
+                                                   (- (string-length raw-subdir)
+                                                      (string-length v-postfix)
+                                                      ;; Drop two slashes.
+                                                      2))))
+                             (when (string-null? module-subdirectory)
+                               (set! module-subdirectory #false))
+                             (unless (integer? ver)
+                               (raise
+                                (formatted-message (G_ "failed to parse version postfix from '~a' for package '~a'")
+                                                   raw-subdir module-path)))
+                             ;; TODO assert that major-version matches the first number in version
+                             ;; TODO assert that only version 1.x.y is allowed without a /v[major-version] postfix
+                             ver))))
+         (vcs-tag (if module-subdirectory
+                      (string-append module-subdirectory "/" version*)
+                      version*))
+         (synopsis (or (false-if-exception
+                        (go-package-synopsis module-path))
+                       (begin
+                         (warning (G_ "Failed to fetch synopsis for ~S.~%")
+                                  module-path)
+                         "TODO FIXME")))
+         (description (or (false-if-exception
+                           (go-package-description module-path))
+                          (begin
+                            (warning (G_ "Failed to fetch description for ~S.~%")
+                                     module-path)
+                            "TODO FIXME")))
+         (licenses (or (false-if-exception
+                        (go-package-licenses module-path))
+                       (begin
+                         (warning (G_ "Failed to fetch license for ~S.~%")
+                                  module-path)
+                         '("unknown-license!")))))
+    ;; Maybe split comma separated list of licenses in a single string
+    (when (and (= 1 (length licenses))
+               (string? (first licenses)))
+      (let ((pieces (map string-trim-both
+                         (remove! string-null?
+                                  (string-split (first licenses) #\,)))))
+        (when (< 1 (length pieces))
+          (set! licenses pieces))))
+    (log.debug " meta-data: ~S~% raw-subdir: ~S, module-subdirectory: ~S, \
+major-version: ~S"
+               meta-data raw-subdir module-subdirectory major-version)
+    (log.debug " dependencies:~%~S" dependencies+versions)
     (values
      `(package
         (name ,guix-name)
         (version ,(strip-v-prefix version*))
         (source
-         ,(vcs->origin vcs-type vcs-repo-url version*))
+         ,(vcs->origin vcs-type vcs-repo-url vcs-tag))
         (build-system go-build-system)
         (arguments
-         '(#:import-path ,module-path
-           ,@(if (string=? module-path-sans-suffix root-module-path)
-                 '()
-                 `(#:unpack-path ,root-module-path))))
+         '(#:tests? #false ; some packages have unrecorded dependencies needed only by their tests
+           #:import-path ,module-path
+           ,@(if module-subdirectory
+                 `(#:unpack-path ,module-root-path)
+                 '())))
         ,@(maybe-propagated-inputs
            (map (match-lambda
                   ((name version)
@@ -810,7 +884,7 @@ When VERSION is unspecified, the latest version available is used."
                   (name
                    (go-module->guix-package-name name)))
                 dependencies))
-        (home-page ,(format #f "https://~a" root-module-path))
+        (home-page ,(format #f "https://~a" module-root-path))
         (synopsis ,synopsis)
         (description ,(and=> description beautify-description))
         (license ,(match (list->licenses licenses)
@@ -898,7 +972,7 @@ This package and its dependencies won't be imported.~%")
                                      #:key (goproxy "https://proxy.golang.org")
                                      version
                                      pin-versions?)
-
+  (log.info "Initiating recursive import of ~a, version ~a" package-name version)
   (recursive-import
    package-name
    #:repo->guix-package
