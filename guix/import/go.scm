@@ -331,7 +331,7 @@ comment, or unknown) and is followed by the indicated data."
   (define-peg-pattern with all (or (and module-path version) file-path))
   (define-peg-pattern replace all (and original => with EOL))
   (define-peg-pattern replace-top body
-    (and (ignore "replace") 
+    (and (ignore "replace")
          (or (and block-start (* (or replace block-line)) block-end) replace)))
 
   ;; RetractSpec = ( Version | "[" Version "," Version "]" ) newline .
@@ -365,22 +365,39 @@ DIRECTIVE."
 (define (go.mod-requirements go.mod)
   "Compute and return the list of requirements specified by GO.MOD."
   (define (replace directive requirements)
-    (define (maybe-replace module-path new-requirement)
-      ;; Do not allow version updates for indirect dependencies (see:
-      ;; https://golang.org/ref/mod#go-mod-file-replace).
-      (if (and (equal? module-path (first new-requirement))
-               (not (assoc-ref requirements module-path)))
-          requirements
-          (cons new-requirement (alist-delete module-path requirements))))
-
+    ;; Specification: https://golang.org/ref/mod#go-mod-file-replace
+    ;; Interesting test cases:
+    ;;   github.com/influxdata/influxdb-client-go/v2@v2.4.0
+    (log.debug "inside replace, directive ~S, requirements ~S" directive requirements)
+    (define (maybe-replace old-module-path old-version new-module-path new-version)
+      (let ((matched-entry (assoc-ref requirements old-module-path)))
+        (log.debug "inside maybe-replace, ~S ~S => ~S ~S, matched-entry ~S"
+                   old-module-path old-version new-module-path new-version matched-entry)
+        (cond ((and (equal? old-module-path new-module-path)
+                    (not matched-entry))
+               ;; "A replace directive has no effect if the module version on the left
+               ;; side is not required."
+               ;; Do not allow version updates for indirect dependencies.
+               requirements)
+              ((and matched-entry
+                    (or (not old-version)
+                        (equal? old-version new-version)))
+               (cons (list new-module-path new-version)
+                     (alist-delete old-module-path requirements)))
+              (else
+               requirements))))
+    (log.debug "toplevel directive is ~S" directive)
     (match directive
-      ((('original ('module-path module-path) . _) with . _)
+      ((('original ('module-path old-module-path) ('version old-version) ...) with)
+       (unless (null? old-version)
+         (set! old-version (first old-version)))
        (match with
-         (('with ('file-path _) . _)
-          (alist-delete module-path requirements))
-         (('with ('module-path new-module-path) ('version new-version) . _)
-          (maybe-replace module-path
-                         (list new-module-path new-version)))))))
+         (('with ('file-path _))
+          ;; Superseded by a module in a local path, so let's delete it.
+          (alist-delete old-module-path requirements))
+         (('with ('module-path new-module-path) ('version new-version))
+          (maybe-replace old-module-path old-version
+                         new-module-path new-version))))))
 
   (define (require directive requirements)
     (match directive
@@ -389,8 +406,10 @@ DIRECTIVE."
 
   (let* ((requires (go.mod-directives go.mod 'require))
          (replaces (go.mod-directives go.mod 'replace))
-         (requirements (fold require '() requires)))
-    (fold replace requirements replaces)))
+         (requirements (fold require '() requires))
+         (result (fold replace requirements replaces)))
+    (log.debug "requires:~% ~S~%replaces:~% ~S~%result:~% ~S" requires replaces result)
+    result))
 
 ;; Prevent inlining of this procedure, which is accessed by unit tests.
 (set! go.mod-requirements go.mod-requirements)
