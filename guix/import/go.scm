@@ -23,7 +23,15 @@
 ;;; You should have received a copy of the GNU General Public License
 ;;; along with GNU Guix.  If not, see <http://www.gnu.org/licenses/>.
 
+;;; goproxy protocol:
+;;;   https://golang.org/ref/mod#module-proxy
+;;;   https://docs.gomods.io/intro/protocol/
+;;;   https://roberto.selbach.ca/go-proxies/
+
 (define-module (guix import go)
+  #:use-module (git)
+  #:use-module (git structs)
+  #:use-module (git errors)
   #:use-module (guix build-system go)
   #:use-module (guix git)
   #:use-module (guix hash)
@@ -51,6 +59,8 @@
   #:autoload   (guix build utils) (mkdir-p dump-port)
   #:autoload   (gcrypt hash) (hash-algorithm sha256)
   #:use-module (ice-9 format)
+  #:use-module (ice-9 control)
+  #:use-module (ice-9 exceptions)
   #:use-module (ice-9 match)
   #:use-module (ice-9 peg)
   #:use-module (ice-9 rdelim)
@@ -629,10 +639,14 @@ build a package."
        (make-module-meta root-path (string->symbol vcs)
                          (strip-.git-suffix/maybe repo-url)))))
   ;; <meta name="go-import" content="import-prefix vcs repo-root">
-  (let* ((meta-data (http-fetch* (format #f "https://~a?go-get=1" module-path)))
+  (let* ((url (format #f "https://~a?go-get=1" module-path))
+         (meta-data (http-fetch* url #:accept-all-response-codes? #true))
          (select (sxpath `(// (meta (@ (equal? (name "go-import"))))
-                              // content))))
-    (match (select (html->sxml meta-data #:strict? #t))
+                              // content)))
+         (sxml (html->sxml meta-data #:strict? #t))
+         (selected (select sxml)))
+    (log.debug "The fetched meta-data from ~A is:~%~S" url selected)
+    (match selected
       (() #f)                           ;nothing selected
       ((('content content-text) ..1)
        (or
@@ -809,22 +823,76 @@ When VERSION is unspecified, the latest version available is used."
          dependencies+versions
          dependencies))))
 
-(define go-module->guix-package*
-  (lambda args
-    ;; Disable output buffering so that the following warning gets printed
-    ;; consistently.
-    (setvbuf (current-error-port) 'none)
-    (let ((package-name (match args ((name _ ...) name))))
-      (guard (c ((http-get-error? c)
-                 (warning (G_ "Failed to import package ~s.
-reason: ~s could not be fetched: HTTP error ~a (~s).
+(define (go-module->guix-package* . args)
+  ;; Disable output buffering so that the following warning gets printed
+  ;; consistently.
+  (setvbuf (current-error-port) 'none)
+  (setvbuf (current-warning-port) 'none)
+  (let* ((package-name (match args ((name _ ...) name)))
+         ;; Use report-all-errors? for debugging purposes only, because
+         ;; e.g. getaddrinfo is not reentrant and therefore we must unwind
+         ;; before retrying.
+         (report-all-errors? #false)
+         (report-network-error
+          (lambda (reason)
+            (warning (G_ "Failing to import package ~S.
+reason: ~A.~%")
+                     package-name reason))))
+    (let loop ((attempts 0))
+      (when (> attempts 0)
+        (sleep 3)
+        (log.info "~%Retrying, attempt ~s." attempts))
+      (cond
+       ((> attempts 60)
+        (warning (G_ "Giving up on importing package ~s.
 This package and its dependencies won't be imported.~%")
-                          package-name
-                          (uri->string (http-get-error-uri c))
-                          (http-get-error-code c)
-                          (http-get-error-reason c))
-                 (values #f '())))
-        (apply go-module->guix-package args)))))
+                 package-name)
+        (values #f '()))
+       (else
+        (guard (c ((http-get-error? c)
+                   (report-network-error
+                    (format #f "~s could not be fetched: HTTP error ~a (~s)"
+                            (uri->string (http-get-error-uri c))
+                            (http-get-error-code c)
+                            (http-get-error-reason c)))
+                   (loop (+ 1 attempts)))
+                  ((eq? (exception-kind c)
+                        'getaddrinfo-error)
+                   (report-network-error "DNS lookup failed")
+                   (loop (+ 1 attempts)))
+                  ((and (eq? (exception-kind c)
+                             'git-error)
+                        (eq? (git-error-class (first (exception-args c)))
+                             GITERR_NET))
+                   (report-network-error "network error coming from git")
+                   (loop (+ 1 attempts)))
+                  (else
+                   (let ((port (current-warning-port)))
+                     (format port "Unexpected error, will skip ~S.~%reason: "
+                             package-name)
+                     ;; Printing a backtrace here is not very useful: it is
+                     ;; cut off because GUARD unwinds.
+                     (print-exception port (stack-ref (make-stack #t) 1)
+                                      c (exception-args c))
+                     (display-backtrace (make-stack #t) port))
+                   ;; give up on this entry
+                   (values #f '())))
+          (with-exception-handler
+              (lambda (c)
+                (when report-all-errors?
+                  (let ((port (current-warning-port)))
+                    (format port "*** exception while importing:~%")
+                    (print-exception port (stack-ref (make-stack #t) 1)
+                                     c (exception-args c))
+                    (format port "*** printing backtrace:~%")
+                    (display-backtrace (make-stack #t) port)
+                    ;; DISPLAY-BACKTRACE can fail, so it's better to make its
+                    ;; exit also visible.
+                    (format port "*** done printing backtrace~%")))
+                (raise-continuable c))
+            (lambda ()
+              (apply go-module->guix-package args))
+            #:unwind? (not report-all-errors?))))))))
 
 (define* (go-module-recursive-import package-name
                                      #:key (goproxy "https://proxy.golang.org")
