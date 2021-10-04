@@ -120,8 +120,11 @@ https://godoc.org/golang.org/x/mod/module#hdr-Escaped_Paths)."
 ;; Prevent inlining of this procedure, which is accessed by unit tests.
 (set! go-path-escape go-path-escape)
 
-(define (go.pkg.dev-info name)
-  (http-fetch* (string-append "https://pkg.go.dev/" name)))
+(define (pkg.go.dev-info module-path)
+  ;; FIXME if MODULE-PATH is a fork on github, then it will try to get the
+  ;; info of the fork (instead of the upstream), which most probably does not
+  ;; exist in pkg.go.dev.  Example: https://github.com/bonitoo-io/oapi-codegen
+  (http-fetch* (string-append "https://pkg.go.dev/" module-path)))
 
 (define* (go-module-version-string goproxy name #:key version)
   "Fetch the version string of the latest version for NAME from the given
@@ -147,7 +150,7 @@ styles for the same package."
 (define (go-package-licenses name)
   "Retrieve the list of licenses that apply to NAME, a Go package or module
 name (e.g. \"github.com/golang/protobuf/proto\")."
-  (let* ((body (go.pkg.dev-info (string-append name "?tab=licenses")))
+  (let* ((body (pkg.go.dev-info (string-append name "?tab=licenses")))
          ;; Extract the text contained in a h2 child node of any
          ;; element marked with a "License" class attribute.
          (select (sxpath `(// (* (@ (equal? (class "License"))))
@@ -169,7 +172,7 @@ formatting and links as text."
 (define (go-package-description name)
   "Retrieve a short description for NAME, a Go package name,
 e.g. \"google.golang.org/protobuf/proto\"."
-  (let* ((body (go.pkg.dev-info name))
+  (let* ((body (pkg.go.dev-info name))
          (sxml (html->sxml body #:strict? #t))
          (overview ((sxpath
                      `(//
@@ -206,8 +209,7 @@ e.g. \"google.golang.org/protobuf\".  The data is scraped from
 the https://pkg.go.dev/ web site."
   ;; Note: Only the *module* (rather than package) page has the README title
   ;; used as a synopsis on the https://pkg.go.dev web site.
-  (let* ((url (string-append "https://pkg.go.dev/" module-name))
-         (body (http-fetch* url))
+  (let* ((body (pkg.go.dev-info module-name))
          ;; Extract the text contained in a h2 child node of any
          ;; element marked with a "License" class attribute.
          (select-title (sxpath
