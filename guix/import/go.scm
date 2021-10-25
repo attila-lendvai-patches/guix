@@ -100,6 +100,17 @@
 
 ;;; Code:
 
+;; FIXME set up logging for the entire project, and replace this poor man's
+;; logger with the proper one.
+(define-syntax-rule (log.info format-string ...)
+  (let ((port (current-warning-port)))
+    (format port format-string ...)
+    (newline port)))
+
+(define-syntax-rule (log.debug format-string ...)
+  ;;(log.info format-string ...)
+  '())
+
 (define http-fetch*
   ;; Like http-fetch, but memoized and returning the body as a string.
   (memoize (lambda args
