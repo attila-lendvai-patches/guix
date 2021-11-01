@@ -172,13 +172,26 @@ name (e.g. \"github.com/golang/protobuf/proto\")."
   "A very basic SXML to Texinfo converter which attempts to preserve HTML
 formatting and links as text."
   (sxml-match sxml-node
-              ((strong ,text)
-               (format #f "@strong{~a}" text))
-              ((a (@ (href ,url)) ,text)
-               (format #f "@url{~a,~a}" url text))
-              ((code ,text)
-               (format #f "@code{~a}" text))
-              (,something-else something-else)))
+    ((strong ,text)
+     (format #f "@strong{~a}" text))
+    ((a (@ (href ,url)) ,body)
+     ;; Examples: image in the url: github.com/go-openapi/jsonpointer
+     ;; (code ...) in the URL body: github.com/mwitkow/go-conntrack
+     (if (string? body)
+         (format #f "@url{~a,~a}" url body)
+         (sxml-match body
+                     ((code ,text)
+                      (format #f "@url{~a,~a}" url (sxml->texi body)))
+                     (,_
+                      (format #f "@url{~a}" url)))))
+    ((code ,text)
+     (format #f "@code{~a}" text))
+    (,something-else
+     ;; Example: @ in the description: github.com/ethersphere/langos
+     (if (string? something-else)
+         (string-replace-substring something-else
+                                   "@" "@@")
+         something-else))))
 
 (define (go-package-description name)
   "Retrieve a short description for NAME, a Go package name,
