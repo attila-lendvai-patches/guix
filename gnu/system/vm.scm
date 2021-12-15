@@ -195,8 +195,13 @@ environment with the store shared with the host.  MAPPINGS is a list of
 with '-virtfs' options for the host file systems listed in SHARED-FS."
 
   (define (virtfs-option fs)
-    #~(format #f "-virtfs local,path=~s,security_model=none,mount_tag=~s"
-              #$fs #$(file-system->mount-tag fs)))
+    ;; KLUDGE FIXME this is not a nice way to do this, but /gnu/store fails
+    ;; for me with 'mapped-xattr'.
+    (let ((security-model (if (string-prefix? "/gnu/store" fs)
+                              "none"
+                              "mapped-xattr")))
+      #~(format #f "-virtfs local,path=~s,security_model=~s,mount_tag=~s"
+                #$fs #$security-model #$(file-system->mount-tag fs))))
 
   #~(;; Only enable kvm if we see /dev/kvm exists.
      ;; This allows users without hardware virtualization to still use these
