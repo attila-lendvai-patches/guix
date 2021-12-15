@@ -5728,25 +5728,27 @@ and lazy re-evaluation (memoize pattern), easy simple parallel computing
 logging and tracing of the execution.")
     (license license:bsd-3)))
 
-
 (define-public python-daemon
   (package
     (name "python-daemon")
     (version "3.0.1")
     (source
      (origin
-       (method url-fetch)
-       (uri (pypi-uri "python-daemon" version))
+       (method git-fetch)
+       (uri (git-reference
+             (url "https://pagure.io/python-daemon.git")
+             (commit (string-append "release/" version))))
+       (file-name (git-file-name name version))
        (sha256
-        (base32
-         "1rfsnij687hk97ppzs2q6mwmxgr632nh672ajd0gzsppf8ilamvc"))))
+        (base32 "0kc7ig5nlbvc3xzkpiw4jv2gvi5c05fa7qa3mi6qwxa6bx8bxjl8"))))
     (build-system python-build-system)
     (arguments
      `(#:phases
        (modify-phases %standard-phases
          (add-before 'check 'adjust-tests
            (lambda _
-             ;; FIXME: Determine why test fails
+             ;; FIXME: Determine why test fails.  Reported upstream as
+             ;; https://pagure.io/python-daemon/issue/84.
              (substitute* "test/test_daemon.py"
                (("test_detaches_process_context")
                 "skip_test_detaches_process_context"))
