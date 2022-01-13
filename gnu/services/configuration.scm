@@ -141,7 +141,9 @@ does not have a default value" field kind)))
                                     (id #'stem #'serialize-maybe- #'stem))))
        #`(begin
            (define (maybe-stem? val)
-             (or (eq? val 'disabled) (stem? val)))
+             (or (eq? val 'disabled)
+                 (eq? val 'undefined)
+                 (stem? val)))
            #,@(if serialize?
                   (list #'(define (serialize-maybe-stem field-name val)
                             (if (stem? val)
