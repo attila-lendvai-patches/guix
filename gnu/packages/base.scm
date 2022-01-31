@@ -84,7 +84,7 @@
 (define-public hello
   (package
     (name "hello")
-    (version "2.11")
+    (version "666")
     (source (origin
               (method url-fetch)
               (uri (string-append "mirror://gnu/hello/hello-" version
