@@ -537,9 +537,15 @@ depending on the policy it implements."
                    (values previous-channels instances)
                    (begin
                      (format (current-error-port)
-                             (G_ "Updating channel '~a' from Git repository at '~a'...~%")
+                             (G_ "Updating channel '~a' from Git repository at \
+'~a'~:[~;, branch '~a'~]...~%")
                              (channel-name channel)
-                             (channel-url channel))
+                             (channel-url channel)
+                             ;; Only conditionally print the branch name.  If
+                             ;; --commit is provided for channel-list in (guix
+                             ;; scripts pull), then the branch is set to #f.
+                             (channel-branch channel)
+                             (channel-branch channel))
                      (let* ((current (current-commit (channel-name channel)))
                             (instance
                              (latest-channel-instance store channel
