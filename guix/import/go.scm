@@ -75,6 +75,7 @@
   #:use-module (srfi srfi-26)
   #:use-module (srfi srfi-34)
   #:use-module (srfi srfi-35)
+  #:use-module (srfi srfi-71) ; let*
   #:use-module (sxml match)
   #:use-module ((sxml xpath) #:renamer (lambda (s)
                                          (if (eq? 'filter s)
@@ -608,19 +609,15 @@ hence the need to derive this information."
       (vcs-qualified-module-path->root-repo-url module-path)
       module-path))
 
-(define* (go-module->guix-package-name module-path #:optional version)
-  "Converts a module's path to the canonical Guix format for Go packages.
-Optionally include a VERSION string to append to the name."
+(define* (go-module->guix-package-name module-path)
+  "Converts a module's path to the canonical Guix format for Go packages."
   ;; Map dot, slash, underscore and tilde characters to hyphens.
   (let ((module-path* (string-map (lambda (c)
                                     (if (member c '(#\. #\/ #\_ #\~))
                                         #\-
                                         c))
                                   module-path)))
-    (string-downcase (string-append "go-" module-path*
-                                    (if version
-                                        (string-append "-" version)
-                                        "")))))
+    (string-downcase (string-append "go-" module-path*))))
 
 (define (strip-.git-suffix/maybe repo-url)
   "Strip a repository URL '.git' suffix from REPO-URL if hosted at GitHub."
@@ -771,6 +768,14 @@ is a pseudo-version.  Return VERSION."
 available versions:~{ ~a~}.")
                                   (map strip-v-prefix
                                        available-versions)))))))))
+(define *module-path->import-path*
+  ;; There's no other way to derive this information, at least that I know of.
+  '(("github.com/google/go-cmp" . "github.com/google/go-cmp/cmp")
+    ("github.com/sergi/go-diff" . "github.com/sergi/go-diff/diffmatchpatch")
+    ("github.com/davecgh/go-spew" . "github.com/davecgh/go-spew/spew")
+    ("github.com/beorn7/perks" . "github.com/beorn7/perks/quantile")
+    ("github.com/census-instrumentation/opencensus-proto" .
+     "github.com/census-instrumentation/opencensus-proto/gen-go")))
 
 (define* (go-module->guix-package module-path #:key
                                   (goproxy "https://proxy.golang.org")
@@ -864,38 +869,48 @@ When VERSION is unspecified, the latest version available is used."
 major-version: ~S"
                meta-data raw-subdir module-subdirectory major-version)
     (log.debug " dependencies:~%~S" dependencies+versions)
-    (values
-     `(package
-        (name ,guix-name)
-        (version ,(strip-v-prefix version*))
-        (source
-         ,(vcs->origin vcs-type vcs-repo-url vcs-tag))
-        (build-system go-build-system)
-        (arguments
-         '(#:tests? #false ; some packages have unrecorded dependencies needed only by their tests
-           #:import-path ,module-path
-           ,@(if module-subdirectory
-                 `(#:unpack-path ,module-root-path)
-                 '())))
-        ,@(maybe-propagated-inputs
-           (map (match-lambda
-                  ((name version)
-                   (go-module->guix-package-name name (strip-v-prefix version)))
-                  (name
-                   (go-module->guix-package-name name)))
-                dependencies))
-        (home-page ,(format #f "https://~a" module-root-path))
-        (synopsis ,synopsis)
-        (description ,(and=> description beautify-description))
-        (license ,(match (list->licenses licenses)
-                    (() #f)                       ;unknown license
-                    ((license)                    ;a single license
-                     license)
-                    ((license ...)                ;a list of licenses
-                     `(list ,@license)))))
-     (if pin-versions?
-         dependencies+versions
-         dependencies))))
+    (let* ((import-path unpack-path
+            (if module-subdirectory
+                (values module-path module-root-path)
+                (let ((import-path (assoc-ref *module-path->import-path*
+                                              module-path)))
+                  (if import-path
+                      (begin
+                        (log.debug "matched as an import-path exception: ~S" import-path)
+                        (values import-path module-path))
+                      (values module-path #f))))))
+      (values
+       `(package
+          (name ,guix-name)
+          (version ,(strip-v-prefix version*))
+          (source
+           ,(vcs->origin vcs-type vcs-repo-url vcs-tag))
+          (build-system go-build-system)
+          (arguments
+           '(#:import-path ,import-path
+             ,@(if unpack-path
+                   `(#:unpack-path ,unpack-path)
+                   '())))
+          ,@(maybe-propagated-inputs
+             (map (match-lambda
+                    ((name version)
+                     (list (go-module->guix-package-name name)
+                           (strip-v-prefix version)))
+                    (name
+                     (go-module->guix-package-name name)))
+                  dependencies))
+          (home-page ,(format #f "https://~a" module-root-path))
+          (synopsis ,synopsis)
+          (description ,(and=> description beautify-description))
+          (license ,(match (list->licenses licenses)
+                      (() #f)                       ;unknown license
+                      ((license)                    ;a single license
+                       license)
+                      ((license ...)                ;a list of licenses
+                       `(list ,@license)))))
+       (if pin-versions?
+           dependencies+versions
+           dependencies)))))
 
 (define (go-module->guix-package* . args)
   ;; Disable output buffering so that the following warning gets printed
