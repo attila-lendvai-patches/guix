@@ -340,14 +340,14 @@ e.g. \"google.golang.org/protobuf/proto\"."
       ((p elements ...)
        (apply string-append (filter string? (map sxml->texi elements)))))))
 
-(define (go-package-synopsis module-name)
-  "Retrieve a short synopsis for a Go module named MODULE-NAME,
+(define (go-package-synopsis module-path)
+  "Retrieve a short synopsis for a Go module named MODULE-PATH,
 e.g. \"google.golang.org/protobuf\".  The data is scraped from
 the https://pkg.go.dev/ web site."
   ;; Note: Only the *module* (rather than package) page has the README title
   ;; used as a synopsis on the https://pkg.go.dev web site.
-  (log.debug "Getting synopsis for ~S" module-name)
-  (let* ((body (pkg.go.dev-info module-name))
+  (log.debug "Getting synopsis for ~S" module-path)
+  (let* ((body (pkg.go.dev-info module-path))
          ;; Extract the text contained in a h2 child node of any
          ;; element marked with a "License" class attribute.
          (select-title (sxpath
