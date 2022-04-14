@@ -50,7 +50,9 @@
   #:use-module (gnu packages ncurses)
   #:use-module (gnu packages node)
   #:use-module (gnu packages perl)
+  #:use-module (gnu packages python)
   #:use-module (gnu packages racket)
+  #:use-module (gnu packages sphinx)
   #:use-module (gnu packages version-control)
   #:use-module (guix build-system gnu)
   #:use-module (guix build-system haskell)
@@ -250,11 +252,17 @@ build us (which is potentially recursive), or use the captured compiler output
                bootstrap-idris)
            clang-toolchain-12 ; older clang-toolchain versions don't have a bin/cc
            coreutils which git
-           node                         ; only for the tests
-           racket                       ; only for the tests
-           sed))
+           sed
+           ;; Only for the tests
+           node
+           racket
+           ;; Only for the docs
+           python-minimal
+           python-sphinx
+           python-sphinx-rtd-theme))
     (inputs
      (list bash-minimal chez-scheme gmp))
+    (outputs '("out" "doc"))
     (arguments
      (list
       #:tests? tests?
@@ -277,6 +285,15 @@ build us (which is potentially recursive), or use the captured compiler output
          (delete 'bootstrap)
          (delete 'configure)
          (delete 'check)    ; check must happen after install and wrap-program
+         (add-before 'build 'build-doc
+           (lambda* (#:key outputs #:allow-other-keys)
+             (invoke "make" "--directory" "docs/" "html")))
+         (add-after 'build-doc 'install-doc
+           (lambda* (#:key outputs #:allow-other-keys)
+             (let ((doc (assoc-ref outputs "doc")))
+               (copy-recursively "docs/build/html"
+                                 (string-append doc "/share/doc/"
+                                                ,name "-" ,version)))))
          (add-after 'unpack 'patch-paths
            (lambda* (#:key inputs #:allow-other-keys)
              (let ((files-to-patch (filter file-exists?
