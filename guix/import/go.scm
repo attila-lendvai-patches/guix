@@ -33,13 +33,22 @@
   #:use-module (guix import json)
   #:use-module (guix packages)
   #:use-module ((guix utils) #:select (string-replace-substring))
-  #:use-module (guix http-client)
+  ;; FIXME? We use a local copy of http-fetch.
+  ;; See https://issues.guix.gnu.org/54836
+  #:use-module ((guix http-client) #:hide (http-fetch))
+  #:use-module (guix base64)
+  #:use-module (rnrs bytevectors)
+  #:use-module ((guix build download)
+                #:select (open-socket-for-uri
+                          (open-connection-for-uri
+                           . guix:open-connection-for-uri)
+                          resolve-uri-reference))
   #:use-module ((guix licenses) #:prefix license:)
   #:use-module (guix memoization)
   #:autoload   (htmlprag) (html->sxml)            ;from Guile-Lib
   #:autoload   (guix serialization) (write-file)
   #:autoload   (guix base32) (bytevector->nix-base32-string)
-  #:autoload   (guix build utils) (mkdir-p)
+  #:autoload   (guix build utils) (mkdir-p dump-port)
   #:autoload   (gcrypt hash) (hash-algorithm sha256)
   #:use-module (ice-9 format)
   #:use-module (ice-9 match)
@@ -68,6 +77,100 @@
   #:export (go-module->guix-package
             go-module->guix-package*
             go-module-recursive-import))
+
+;; This is a duplicate from (guix http-client) with the addition of a
+;; #:accept-all-response-codes? param. See https://issues.guix.gnu.org/54836
+(define* (http-fetch uri #:key port (text? #f) (buffered? #t)
+                     (open-connection guix:open-connection-for-uri)
+                     (keep-alive? #f)
+                     (verify-certificate? #t)
+                     (headers '((user-agent . "GNU Guile")))
+                     (log-port (current-error-port))
+                     timeout
+                     (accept-all-response-codes? #f))
+  "Return an input port containing the data at URI, and the expected number of
+bytes available or #f.  If TEXT? is true, the data at URI is considered to be
+textual.  Follow any HTTP redirection.  When BUFFERED? is #f, return an
+unbuffered port, suitable for use in `filtered-port'.  HEADERS is an alist of
+extra HTTP headers.
+
+When KEEP-ALIVE? is true, the connection is marked as 'keep-alive' and PORT is
+not closed upon completion.
+
+When VERIFY-CERTIFICATE? is true, verify HTTPS server certificates.
+
+TIMEOUT specifies the timeout in seconds for connection establishment; when
+TIMEOUT is #f, connection establishment never times out.
+
+Write information about redirects to LOG-PORT.
+
+When ACCEPT-ALL-RESPONSE-CODES? is false then raise an '&http-get-error'
+condition if downloading fails, otherwise return the response regardless
+of the reponse code."
+  (define parsed-initial-uri
+    (if (string? uri) (string->uri uri) uri))
+
+  (define (open-connection* uri)
+    (open-connection uri
+                     #:verify-certificate? verify-certificate?
+                     #:timeout timeout))
+
+  (let loop ((current-uri parsed-initial-uri)
+             (current-port (or port (open-connection parsed-initial-uri))))
+    (let ((headers (match (uri-userinfo current-uri)
+                     ((? string? str)
+                      (cons (cons 'Authorization
+                                  (string-append "Basic "
+                                                 (base64-encode
+                                                  (string->utf8 str))))
+                            headers))
+                     (_ headers))))
+      (unless (or buffered? (not (file-port? current-port)))
+        (setvbuf current-port 'none))
+      (let*-values (((resp data)
+                     (http-get current-uri #:streaming? #t #:port current-port
+                               #:keep-alive? keep-alive?
+                               #:headers headers))
+                    ((code)
+                     (response-code resp)))
+        (case code
+          ((200)
+           (values data (response-content-length resp)))
+          ((301                         ; moved permanently
+            302                         ; found (redirection)
+            303                         ; see other
+            307                         ; temporary redirection
+            308)                        ; permanent redirection
+           (let ((host (uri-host current-uri))
+                 (new-uri (resolve-uri-reference (response-location resp)
+                                                 current-uri)))
+             (if keep-alive?
+                 (dump-port data (%make-void-port "w0")
+                            (response-content-length resp))
+                 (close-port current-port))
+             (format log-port (G_ "following redirection to `~a'...~%")
+                     (uri->string new-uri))
+             (loop new-uri
+                   (or (and keep-alive?
+                            (or (not (uri-host new-uri))
+                                (string=? host (uri-host new-uri)))
+                            current-port)
+                       (open-connection* new-uri)))))
+          (else
+           (if accept-all-response-codes?
+               (values data (response-content-length resp))
+               (raise (condition (&http-get-error
+                                  (uri current-uri)
+                                  (code code)
+                                  (reason (response-reason-phrase resp))
+                                  (headers (response-headers resp)))
+                                 (&message
+                                  (message
+                                   (format
+                                    #f
+                                    (G_ "~a: HTTP download failed: ~a (~s)")
+                                    (uri->string current-uri) code
+                                    (response-reason-phrase resp)))))))))))))
 
 ;;; Commentary:
 ;;;
