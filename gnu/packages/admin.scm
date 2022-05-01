@@ -337,12 +337,13 @@ interface and is based on GNU Guile.")
     (inherit shepherd-0.8)
     (version "0.9.3")
     (source (origin
-              (method url-fetch)
-              (uri (string-append "mirror://gnu/shepherd/shepherd-"
-                                  version ".tar.gz"))
+              (method git-fetch)
+              (uri (git-reference
+                    (url "https://git.savannah.gnu.org/git/shepherd.git/")
+                    (commit (string-append "v" version))))
+              (file-name (git-file-name "shepherd" version))
               (sha256
-               (base32
-                "0qy2yq13xhf05an5ilz7grighdxicx56211yaarqq5qigiiybc32"))))
+               (base32 "1pvdpx2mfki8wvhcac54p8fn5idqszicww60ikswszz2cv5d0s11"))))
     (arguments
      (list #:configure-flags #~'("--localstatedir=/var")
            #:make-flags #~'("GUILE_AUTO_COMPILE=0")
@@ -362,24 +363,31 @@ interface and is based on GNU Guile.")
                                       (this-package-input "guile-fibers")
                                       "/lib/guile/3.0/site-ccache"))))))
                         #~%standard-phases)))
-
-    ;; Note: Use 'guile-3.0-latest' to address the continuation-related memory
-    ;; leak reported at <https://issues.guix.gnu.org/58631>.
-    (native-inputs (list pkg-config guile-3.0-latest
-                         guile-fibers-1.1))       ;for cross-compilation
-    (inputs (list guile-3.0-latest guile-fibers-1.1))))
+    (native-inputs
+     (list autoconf
+           automake
+           gettext-minimal
+           guile-3.0
+           guile-fibers-1.1             ; for cross-compilation
+           help2man
+           pkg-config
+           texinfo))
+    (inputs (list guile-3.0
+                  guile-fibers-1.1))))
 
 (define-public shepherd-0.10
   (package
     (inherit shepherd-0.9)
     (version "0.10.2")
     (source (origin
-              (method url-fetch)
-              (uri (string-append "mirror://gnu/shepherd/shepherd-"
-                                  version ".tar.gz"))
+              (method git-fetch)
+              (uri (git-reference
+                    (url "https://git.savannah.gnu.org/git/shepherd.git/")
+                    (commit (string-append "v" version))))
+              (file-name (git-file-name "shepherd" version))
               (sha256
                (base32
-                "0v9ld9gbqdp5ya380fbkdsxa0iqr90gi6yk004ccz3n792nq6wlj"))))
+                "1kvfv4rkgs5jq2wir72m29idgk3n2i44qji9rq1hmmc8vkgqxh26"))))
     (native-inputs (modify-inputs (package-native-inputs shepherd-0.9)
                      (replace "guile-fibers" guile-fibers-1.3)))
     (inputs (modify-inputs (package-inputs shepherd-0.9)
