@@ -1443,7 +1443,7 @@ from (gnu system mapped-devices) and return it."
       (source (uuid ,(uuid->string
                       (read-luks-partition-uuid file-name)
                       'luks)))
-      (target ,label)
+      (targets (list ,label))
       (type luks-device-mapping))))
 
 (define (root-user-partition? partition)
