@@ -247,6 +247,8 @@ upon error."
                        #:select (find-partition-by-luks-uuid))
                       (rnrs bytevectors))
 
+         (setenv "GUILE_WARN_DEPRECATED" "detailed")
+
          (with-output-to-port (%make-void-port "w")
            (lambda ()
              (set-path-environment-variable "PATH" '("bin" "sbin")
