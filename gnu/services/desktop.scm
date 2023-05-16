@@ -457,6 +457,7 @@ site} for more information."
   bluetooth-configuration make-bluetooth-configuration
   bluetooth-configuration?
   (bluez bluetooth-configuration-bluez (default bluez))
+  (debug-log bluetooth-configuration-debug-log (default #f))
 
   ;;; [General]
   (name bluetooth-configuration-name (default "BlueZ"))
@@ -850,7 +851,10 @@ site} for more information."
    (documentation "Run the bluetoothd daemon.")
    (start #~(make-forkexec-constructor
              (list #$(file-append (bluetooth-configuration-bluez config)
-                                  "/libexec/bluetooth/bluetoothd"))))
+                                  "/libexec/bluetooth/bluetoothd"
+                                  (if (bluetooth-configuration-debug-log config)
+                                      " -d"
+                                      "")))))
    (stop #~(make-kill-destructor))))
 
 (define bluetooth-service-type
