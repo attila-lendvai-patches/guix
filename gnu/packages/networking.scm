@@ -254,6 +254,51 @@ on byte-critical systems.  It supports HTTP, HTTPS, FTP and FTPS
 protocols.")
     (license license:gpl2+)))
 
+;; TODO wants to launch netperf and other binaries. need to substitute them
+;; or add a wrapper or something.
+(define-public flent
+  (package
+    (name "flent")
+    (version "2.1.1")
+    (source
+     (origin
+       (method git-fetch)
+       (uri
+        (git-reference
+         (url "https://github.com/tohojo/flent")
+         (commit (string-append "v" version))))
+       (file-name (git-file-name name version))
+       (sha256
+        (base32 "1p7qq87dpjfcvvdpi96lbhbflkrbsl7n0fbd5s5i25f0gjnhrr5f"))))
+    (build-system python-build-system)
+    (arguments
+     (list
+      #:phases
+      #~(modify-phases %standard-phases
+          (add-after 'unpack 'substitute-binaries
+            (lambda _
+              (substitute* "flent/runners.py"
+                (("ping, '-D'") "ping")
+                ;;(("_irtt = {}")
+                ;; (simple-format #t "_irtt = {'binary:' '%a'}"
+                ;;                (search-input-file inputs "/bin/netperf")))
+                )))
+          ;; Launches netperf from the PATH.
+          ;; (replace 'wrap
+          ;;   (lambda* (#:key inputs #:allow-other-keys)
+          ;;     (let ((binary (string-append #$output "/bin/flent"))
+          ;;           (path   (getenv "PATH")))
+          ;;       (wrap-program binary
+          ;;         `("PATH" ":" prefix
+          ;;           (,(dirname (search-input-file inputs "/bin/netperf"))))))))
+          )))
+    (propagated-inputs
+     (list netperf))
+    (home-page "http://flent.org")
+    (synopsis "The FLExible Network Tester")
+    (description "The FLExible Network Tester")
+    (license #f)))
+
 (define-public lcrq
   (package
     (name "lcrq")
