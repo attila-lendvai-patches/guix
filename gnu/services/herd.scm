@@ -293,9 +293,9 @@ service is transient."
   "Load and register the services from FILES, where FILES contain code that
 returns a shepherd <service> object."
   (eval-there `(register-services
-                ,@(map (lambda (file)
-                         `(primitive-load ,file))
-                       files))))
+                (list ,@(map (lambda (file)
+                               `(primitive-load ,file))
+                             files)))))
 
 (define load-services/safe
   ;; Deprecated.  It used to behave differently before service replacements

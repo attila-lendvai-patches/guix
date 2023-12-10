@@ -313,7 +313,7 @@ stored."
                        #:start #$(shepherd-service-start service)
                        #:stop #$(shepherd-service-stop service)
                        #:actions
-                       (make-actions
+                       (actions
                         #$@(map (match-lambda
                                   (($ <shepherd-action> name proc doc)
                                    #~(#$name #$doc #$proc)))
@@ -412,10 +412,10 @@ as shepherd package."
           ;; than a kernel panic.
           (call-with-error-handling
             (lambda ()
-              (apply register-services
-                     (parameterize ((current-warning-port
-                                     (%make-void-port "w")))
-                       (map load-compiled '#$(map scm->go files))))))
+              (register-services
+               (parameterize (#;(current-warning-port
+                               (%make-void-port "w")))
+                 (map load-compiled '#$(map scm->go files))))))
 
           (format #t "starting services...~%")
           (let ((services-to-start

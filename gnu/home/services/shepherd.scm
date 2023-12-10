@@ -75,11 +75,7 @@ as shepherd package."
       #~(begin
           (use-modules (srfi srfi-34)
                        (system repl error-handling))
-          (apply
-           register-services
-           (map
-            (lambda (file) (load file))
-            '#$files))
+          (register-services (map load '#$files))
 
           #$@(if daemonize?
                  `((action 'root 'daemonize))
